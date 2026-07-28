@@ -11,8 +11,9 @@ GRADE_NAME = "중립구역"
 AUTO_ASSIGN_TEXT = "자동 배정받기"
 COUNT_COMPLETE_TEXT = "선택 완료"
 SUCCESS_TEXT = "좌석 1개가 자동 배정됐어요"
+OTHER_ZONE_TEXT = "다른 구역 선택하기"
 DEBUGGER_URL = "http://127.0.0.1:9222/json"
-RETRY_DELAY_SECONDS = 0.3
+RETRY_DELAY_SECONDS = 0.05
 
 
 class ChromeWebSocket:
@@ -184,13 +185,6 @@ def find_grade_button(chrome):
               button.querySelector('[class*="SportsSeatGradeList_contentRemainCount"]')?.textContent.trim() ||
               buttonText.replace(gradeName, '').trim();
             const remainCount = Number(countText.replace(/[^0-9]/g, ''));
-            if (Number.isFinite(remainCount) && remainCount === 0) {{
-              return {{
-                ok: false,
-                stop: true,
-                message: `${{gradeName}} remain count is 0`
-              }};
-            }}
 
             button.scrollIntoView({{ block: 'center', inline: 'center' }});
             const rect = button.getBoundingClientRect();
@@ -337,25 +331,63 @@ def click_zoom_fit_button(chrome):
         print("zoom fit clicked")
 
 
+def click_other_zone_button(chrome):
+    result = evaluate(
+        chrome,
+        f"""
+        (() => {{
+          const button = [...document.querySelectorAll('button[type="button"], button')]
+            .find((item) => {{
+              const text = item.textContent.replace(/\\s+/g, ' ').trim();
+              const className = String(item.className);
+              return (
+                text === {OTHER_ZONE_TEXT!r} ||
+                className.includes('AutoAssignFailDialog_dialogButton')
+              );
+            }});
+          if (!button) return {{ ok: false, message: 'other zone button not found' }};
+
+          button.scrollIntoView({{ block: 'center', inline: 'center' }});
+          const rect = button.getBoundingClientRect();
+          return {{
+            ok: true,
+            x: rect.left + rect.width / 2,
+            y: rect.top + rect.height / 2,
+            disabled: Boolean(button.disabled),
+            text: button.textContent.trim()
+          }};
+        }})()
+        """,
+    )
+    if not result or not result.get("ok"):
+        return False
+    if result.get("disabled"):
+        print("other zone button disabled")
+        return False
+
+    mouse_click(chrome, result["x"], result["y"])
+    print(f"other zone clicked: {result.get('text')}")
+    return True
+
+
 def run_once(chrome):
+    if click_other_zone_button(chrome):
+        time.sleep(0.05)
+
     if click_point_result(chrome, find_increment_button(chrome), "increment"):
-        time.sleep(0.15)
+        time.sleep(0.05)
         click_point_result(chrome, find_count_complete_button(chrome), "count complete")
         return "tried"
 
     grade_button = find_grade_button(chrome)
-    if grade_button and grade_button.get("stop"):
-        print(grade_button.get("message", "remain count is 0"))
-        return "stop"
-
     if click_point_result(chrome, grade_button, "grade"):
         time.sleep(0.1)
 
     if click_point_result(chrome, find_auto_assign_button(chrome), "auto assign"):
-        time.sleep(0.15)
+        time.sleep(0.05)
 
     if click_point_result(chrome, find_increment_button(chrome), "increment"):
-        time.sleep(0.15)
+        time.sleep(0.05)
         click_point_result(chrome, find_count_complete_button(chrome), "count complete")
         return "tried"
 
@@ -374,9 +406,8 @@ def main():
 
         print(f"Attempt {attempt}")
         status = run_once(chrome)
-        if status == "stop":
-            return
         if status == "tried" and not is_success_visible(chrome):
+            click_other_zone_button(chrome)
             click_zoom_fit_button(chrome)
         attempt += 1
         time.sleep(RETRY_DELAY_SECONDS)
